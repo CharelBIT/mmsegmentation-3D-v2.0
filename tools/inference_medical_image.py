@@ -94,7 +94,7 @@ def main():
 
     # build the dataloader
     # TODO: support multiple images per gpu (only minor changes are needed)
-    dataset = build_dataset(cfg.data.test)
+    dataset = build_dataset(cfg.data.inference)
 
     # build the model and load checkpoint
     cfg.model.train_cfg = None
@@ -138,12 +138,12 @@ def main():
     for d in tqdm(data_loader):
         with torch.no_grad():
             result = model(return_loss=False, **d)[0]
-            result = result.astype(np.float64)
+            # result = result.astype(np.float64)
             # result = result.astype(np.float64)
             results.append(result)
             num_classes = result.shape[0]
             for i in range(num_classes):
-                image_nii = nib.Nifti1Image(result[i, ...], d['img_metas'].data[0][0]['img_affine_matrix'][0])
+                image_nii = nib.Nifti1Image(result[i, ...].astype(np.uint8), d['img_metas'].data[0][0]['img_affine_matrix'][0])
                 if not eval_options.get('background_as_first_channel', True):
                     save_path = os.path.join(args.work_dir,
                                              d['img_metas'].data[0][0]['image_id'] + '_{}.nii.gz'.format(dataset.CLASSES[i + 1]))
@@ -152,7 +152,8 @@ def main():
                                              d['img_metas'].data[0][0]['image_id'] + '_{}.nii.gz'.format(
                                                  model.CLASSES[i]))
                 nib.save(image_nii, save_path)
-    data_loader.dataset.evaluate(results, 'mDice', **eval_options)
+    if args.eval:
+        data_loader.dataset.evaluate(results, 'mDice', **eval_options)
 
 if __name__ == '__main__':
     main()

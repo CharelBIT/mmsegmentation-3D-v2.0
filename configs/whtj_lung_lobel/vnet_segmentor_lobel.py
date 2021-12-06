@@ -22,7 +22,8 @@ test_pipeline = [
         dict(type='NormalizeMedical', norm_type='wcww', window_center=-600, window_width=1600),
         dict(type='ConcatImage'),
         dict(type='ToTensor', keys=['img']),
-        dict(type='Collect', keys=['img'])
+        dict(type='Collect', keys=['img'],
+             extend_meta_keys=['image_id', 'img_affine_matrix'])
 ]
 
 data = dict(
@@ -61,7 +62,18 @@ data = dict(
             img_dir='stas_nifty_data_1x1x1',
             ann_dir='stas_nifty_data_1x1x1',
             pipeline=test_pipeline),
+    inference=dict(
+            classes=("background", "lobel"),
+            img_suffixes=['image.nii.gz'],
+            seg_map_suffix="lobel.nii.gz",
+            type='BraTS2018Dataset',
+            data_root=data_root,
+            split='lobel_total.txt',
+            img_dir='stas_nifty_data_1x1x1',
+            ann_dir='stas_nifty_data_1x1x1',
+            pipeline=test_pipeline),
     )
+
 
 
 # model settings
@@ -79,6 +91,7 @@ model = dict(
     resize_mode="trilinear",
     loss_cfg=dict(type="MedicalDiceLoss",
                   classes=1,
+                  use_sigmoid=True,
                   class_weight=[1.],
                   loss_weight=1.,
                   background_as_first_channel=background_as_first_channel),
@@ -95,7 +108,7 @@ lr_config = dict(policy='poly', power=0.9, min_lr=1e-5, by_epoch=False)
 # runtime settings
 runner = dict(type='IterBasedRunner', max_iters=20000)
 checkpoint_config = dict(by_epoch=False, interval=2000)
-evaluation = dict(interval=20000)
+evaluation = dict(interval=2000)
 
 # yapf:disable
 log_config = dict(
@@ -109,6 +122,6 @@ dist_params = dict(backend='nccl')
 log_level = 'INFO'
 load_from = None
 # work_dirs =
-resume_from = None
+resume_from = ''
 workflow = [('train', 1)]
 cudnn_benchmark = True

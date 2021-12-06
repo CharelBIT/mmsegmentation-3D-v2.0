@@ -91,8 +91,12 @@ class BraTS2018Dataset(CustomDataset):
                         img_info['filename'].append(img_name[0])
                     if ann_dir is not None:
                         seg_map = glob(osp.join(img_dir, img_id, '*{}'.format(seg_map_suffix)))
-                        assert len(seg_map) == 1, "Only support one seg info"
-                        img_info["ann"] = dict(seg_map=seg_map[0])
+                        if len(seg_map) == 0:
+                            img_info["ann"] = None
+                        else:
+                            assert len(seg_map) == 1, 'Only support one seg info'
+                            img_info["ann"] = dict(seg_map=seg_map[0])
+                    img_info['image_id'] = img_id
                     img_infos.append(img_info)
         else:
             img_ids = os.listdir(img_dir)
@@ -207,39 +211,49 @@ class BraTS2018Dataset(CustomDataset):
                  **kwargs):
 
         eval_results = {}
+        dice_per_patient = {}
         gt_seg_maps = self.get_gt_seg_maps(efficient_test)
         for i in range(len(gt_seg_maps)):
             gt_seg_maps[i] = gt_seg_maps[i][np.newaxis, ...].astype(np.int64)
-        gt_seg_maps = torch.from_numpy(np.ascontiguousarray(np.concatenate(gt_seg_maps, axis=0)))
-        if mmcv.is_list_of(results, np.ndarray):
-            if len(results[0].shape) == 5:
-                results = torch.from_numpy(np.ascontiguousarray(np.concatenate(results, axis=0)))
-            elif len(results[0].shape) == 4:
-                for i in range(len(results)):
-                    results[i] = results[i][np.newaxis, ...]
-                results = torch.from_numpy(np.ascontiguousarray(np.concatenate(results, axis=0)))
-        elif  mmcv.is_list_of(results, torch.Tensor):
-            if len(results[0].shape) == 5:
-                results = torch.cat(results, dim=0)
-            elif len(results[0].shape) == 4:
-                for i in range(len(results)):
-                    results[i] = results[i][np.newaxis, ...]
-                results = torch.cat(results, dim=0)
-        else:
-            raise NotImplementedError
-        # if kwargs.get("sigmoid_normalization", True):
-        #     results = F.sigmoid(results)
+        assert len(gt_seg_maps) == len(results), '[ERROR] Miss Match ground truth and prediction'
+        patient_infos = [info['filename'] for info in self.img_infos]
+        for i, patient_info in enumerate(patient_infos):
+            gt_seg_map = torch.from_numpy(gt_seg_maps[i])
+            result = torch.from_numpy(results[i])
+            result = result[None, ...]
+            gt_seg_map = expand_as_one_hot(gt_seg_map, result.size(1),
+                                            background_as_first_channel=kwargs.get("background_as_first_channel", True))
+            per_channel_dice = compute_per_channel_dice(result, gt_seg_map)
+            per_channel_dice = per_channel_dice.detach().cpu().numpy()
+            dice_per_patient[patient_info[0]] = per_channel_dice
+        dices = np.asarray([dice_per_patient[key] for key in dice_per_patient])
+        mean_dices = dices.mean(axis=0)
+        # gt_seg_maps = torch.from_numpy(np.ascontiguousarray(np.concatenate(gt_seg_maps, axis=0)))
+        # if mmcv.is_list_of(results, np.ndarray):
+        #     if len(results[0].shape) == 5:
+        #         results = torch.from_numpy(np.ascontiguousarray(np.concatenate(results, axis=0)))
+        #     elif len(results[0].shape) == 4:
+        #         for i in range(len(results)):
+        #             results[i] = results[i][np.newaxis, ...]
+        #         results = torch.from_numpy(np.ascontiguousarray(np.concatenate(results, axis=0)))
+        # elif  mmcv.is_list_of(results, torch.Tensor):
+        #     if len(results[0].shape) == 5:
+        #         results = torch.cat(results, dim=0)
+        #     elif len(results[0].shape) == 4:
+        #         for i in range(len(results)):
+        #             results[i] = results[i][np.newaxis, ...]
+        #         results = torch.cat(results, dim=0)
         # else:
-        #     results = F.softmax(results, dim=1)
-        gt_seg_maps = expand_as_one_hot(gt_seg_maps, results.size(1),
-                                        background_as_first_channel=kwargs.get("background_as_first_channel", True))
-        per_channel_dice = compute_per_channel_dice(results, gt_seg_maps)
-        per_channel_dice = per_channel_dice.detach().cpu().numpy()
+        #     raise NotImplementedError
+        # gt_seg_maps = expand_as_one_hot(gt_seg_maps, results.size(1),
+        #                                 background_as_first_channel=kwargs.get("background_as_first_channel", True))
+        # per_channel_dice = compute_per_channel_dice(results, gt_seg_maps)
+        # per_channel_dice = per_channel_dice.detach().cpu().numpy()
         class_table_data = PrettyTable()
         return_val = {}
-        for i in range(per_channel_dice.shape[0]):
-            class_table_data.add_column("{}_Channels".format(i), [per_channel_dice[i].item()])
-            return_val["{}_Channels".format(i)] = per_channel_dice[i].item()
+        for i in range(mean_dices.shape[0]):
+            class_table_data.add_column("{}_Channels".format(i), [mean_dices[i].item()])
+            return_val["{}_Channels".format(i)] = mean_dices[i].item()
         print_log('per class results:', logger)
         print_log('\n' + class_table_data.get_string(), logger=logger)
         return return_val
